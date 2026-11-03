@@ -25,10 +25,10 @@ from data_processing import PHASE_LABELS, SLOT_LABELS, get_clean_data
 
 THEME_TOML = """[theme]
 base = "light"
-primaryColor = "#454832"
-backgroundColor = "#E8DED0"
-secondaryBackgroundColor = "#F5F0E8"
-textColor = "#352A24"
+primaryColor = "#2F6FDE"
+backgroundColor = "#F2F7FD"
+secondaryBackgroundColor = "#E1ECFA"
+textColor = "#0B1F3A"
 font = "sans serif"
 """
 _theme_file = Path.cwd() / ".streamlit" / "config.toml"
@@ -41,12 +41,11 @@ if not _theme_file.exists():
 
 st.set_page_config(page_title="Injury Impact | FootLens Analytics", page_icon="⚽", layout="wide")
 
-# Refined editorial palette: olive, mocha, warm ivory and powder blue.
-INK, DEEP, BLUE, SKY, TEAL, SLATE, CORAL = "#352A24", "#454832", "#91A8C4", "#8FA3B0", "#879078", "#88796B", "#B86F5E"
-BLUE_SCALE = ["#E8DED0", "#91A8C4", "#91A8C4", "#8FA3B0", "#454832"]
-GRID = "#D4C7B8"
-PHASE_COLOURS = {"Before injury": TEAL, "Player absent": CORAL, "After return": BLUE}
-RESULT_COLOURS = {"win": TEAL, "draw": "#A79581", "lose": CORAL}
+INK, DEEP, BLUE, SKY, TEAL, SLATE, CORAL = "#0B1F3A", "#143C8A", "#2F6FDE", "#8DBCF7", "#1F9DB0", "#8FA8C8", "#E4605C"
+BLUE_SCALE = ["#EEF5FD", "#9CC5F5", BLUE, "#0F2F66"]
+GRID = "#E3ECF7"
+PHASE_COLOURS = {"Before injury": SLATE, "Player absent": DEEP, "After return": BLUE}
+RESULT_COLOURS = {"win": BLUE, "draw": "#B7C9E2", "lose": CORAL}
 SEASON_MONTHS = ["Aug", "Sep", "Oct", "Nov", "Dec", "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul"]
 POSITION_GROUPS = ["Goalkeeper", "Defender", "Midfielder", "Forward"]
 
@@ -61,58 +60,50 @@ POSITION_SHORT = {
     "Central Midfielder": "CM", "Left Midfielder": "LM", "Right Midfielder": "RM", "Attacking Midfielder": "AM",
     "Left winger": "LW", "Right winger": "RW", "Center Forward": "CF",
 }
-DROP_SCALE = [[0, "#91A8C4"], [0.5, "#F5F0E8"], [1, "#B86F5E"]]
+DROP_SCALE = [[0, SKY], [0.5, "#FFFFFF"], [1, CORAL]]
 
 st.markdown(
     """
     <style>
     @import url('https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@600;700&family=Barlow:wght@400;500;600&display=swap');
-    :root { color-scheme: light; }
     html, body, [class*="css"] { font-family: 'Barlow', sans-serif; }
-    .stApp, [data-testid="stAppViewContainer"], [data-testid="stHeader"] { background: #E8DED0 !important; }
-    [data-testid="stHeader"] { background: rgba(16,17,22,0.92) !important; }
-    [data-testid="stSidebar"], [data-testid="stSidebar"] > div:first-child { background: #E2D6C7 !important; border-right: 1px solid #D4C7B8; }
+    .stApp, [data-testid="stAppViewContainer"], [data-testid="stMain"], section.main { background: #F2F7FD !important; }
+    [data-testid="stHeader"] { background: transparent !important; }
+    [data-testid="stToolbar"], [data-testid="stDecoration"], [data-testid="stStatusWidget"], #MainMenu, footer { display: none !important; visibility: hidden !important; }
+    [data-testid="stSidebar"], [data-testid="stSidebar"] > div:first-child { background: #E1ECFA !important; }
     .stApp h1, .stApp h2, .stApp h3, .stApp h4, .stApp h5,
     [data-testid="stMarkdownContainer"] p, [data-testid="stMarkdownContainer"] li,
     [data-testid="stCaptionContainer"], [data-testid="stCaptionContainer"] p,
-    [data-testid="stWidgetLabel"] p, .stRadio label p, [data-testid="stExpander"] summary p { color: #352A24 !important; }
-    h1, h2, h3, h4 { font-family: 'Barlow Condensed', sans-serif; letter-spacing: 0.3px; }
-    .block-container { padding-top: 1.7rem; max-width: 1600px; }
+    [data-testid="stWidgetLabel"] p, .stRadio label p, [data-testid="stExpander"] summary p { color: #0B1F3A !important; }
+    h1, h2, h3, h4 { font-family: 'Barlow Condensed', sans-serif; letter-spacing: 0.2px; }
+    .block-container { padding-top: 2rem; }
     .hero { background:
-        radial-gradient(circle at 88% 48%, transparent 65px, rgba(198,241,53,0.20) 65px, rgba(198,241,53,0.20) 67px, transparent 67px),
-        linear-gradient(90deg, transparent calc(88% - 1px), rgba(198,241,53,0.24) calc(88% - 1px), rgba(198,241,53,0.24) calc(88% + 1px), transparent calc(88% + 1px)),
-        linear-gradient(115deg, #454832 0%, #5A5D47 54%, #7A8065 100%);
-        padding: 1.65rem 1.9rem; border: 1px solid #D4C7B8; border-left: 5px solid #454832; border-radius: 18px; margin-bottom: 1.2rem; box-shadow: 0 14px 32px rgba(0,0,0,0.18); }
-    .stApp .hero h1 { color: #F7F7F8 !important; font-size: 2.65rem; margin: 0 0 0.35rem 0; }
-    .stApp .hero p { color: #F5F0E8 !important; margin: 0; font-size: 1.02rem; max-width: 950px; }
-    [data-testid="stMetric"] { background: #F5F0E8; border: 1px solid #D4C7B8; border-top: 3px solid #454832; border-radius: 14px; padding: 0.8rem 0.95rem; box-shadow: 0 8px 22px rgba(0,0,0,0.12); }
-    [data-testid="stMetricValue"], [data-testid="stMetricValue"] div { font-family: 'Barlow Condensed', sans-serif; font-size: 2.1rem; color: #352A24 !important; }
-    [data-testid="stMetricLabel"], [data-testid="stMetricLabel"] p, [data-testid="stMetricLabel"] div { color: #76685E !important; font-size: 0.9rem; }
-    [data-testid="stMetricDelta"] { color: #454832 !important; }
-    button[data-baseweb="tab"] { background: transparent; border-radius: 9px 9px 0 0; }
-    button[data-baseweb="tab"] p { color: #76685E !important; font-weight: 500; }
-    button[data-baseweb="tab"][aria-selected="true"] { border-bottom: 3px solid #454832; }
-    button[data-baseweb="tab"][aria-selected="true"] p { color: #454832 !important; font-weight: 700; }
-    [data-testid="stPlotlyChart"] { background: #F5F0E8; border: 1px solid #D4C7B8; border-radius: 14px; padding: 6px; }
-    [data-testid="stDataFrame"], [data-testid="stTable"] { border: 1px solid #D4C7B8; border-radius: 12px; overflow: hidden; }
-    [data-testid="stExpander"] { background: #F5F0E8; border: 1px solid #D4C7B8; border-radius: 12px; }
-    [data-testid="stTextInput"] input, [data-testid="stNumberInput"] input { background: #EDE4D9 !important; color: #352A24 !important; border-color: #C4B5A4 !important; }
-    [data-baseweb="select"] > div, [data-baseweb="popover"] { background: #EDE4D9 !important; border-color: #C4B5A4 !important; }
-    .takeaway { background: #E6E0D4; border: 1px solid #C7C7AE; border-left: 4px solid #454832; border-radius: 10px; padding: 0.7rem 0.95rem; margin-top: 0.55rem; color: #454832; font-size: 0.95rem; line-height: 1.4; }
+        radial-gradient(circle at 91% 50%, transparent 62px, rgba(255,255,255,0.16) 62px, rgba(255,255,255,0.16) 64px, transparent 64px),
+        linear-gradient(90deg, transparent calc(91% - 1px), rgba(255,255,255,0.16) calc(91% - 1px), rgba(255,255,255,0.16) calc(91% + 1px), transparent calc(91% + 1px)),
+        linear-gradient(120deg, #0B1F3A 0%, #143C8A 55%, #2F6FDE 100%);
+        padding: 1.5rem 1.9rem; border-radius: 16px; margin-bottom: 1.2rem; }
+    .stApp .hero h1 { color: #FFFFFF !important; font-size: 2.6rem; margin: 0 0 0.3rem 0; }
+    .stApp .hero p { color: #DCE9FB !important; margin: 0; font-size: 1.05rem; }
+    [data-testid="stMetric"] { background: #FFFFFF; border: 1px solid #D5E3F5; border-left: 5px solid #2F6FDE; border-radius: 12px; padding: 0.7rem 0.9rem; }
+    [data-testid="stMetricValue"], [data-testid="stMetricValue"] div { font-family: 'Barlow Condensed', sans-serif; font-size: 2.1rem; color: #0B1F3A !important; }
+    [data-testid="stMetricLabel"], [data-testid="stMetricLabel"] p, [data-testid="stMetricLabel"] div { color: #35507A !important; font-size: 0.9rem; }
+    button[data-baseweb="tab"] p { color: #35507A !important; font-weight: 500; }
+    button[data-baseweb="tab"][aria-selected="true"] p { color: #2F6FDE !important; font-weight: 600; }
+    [data-testid="stPlotlyChart"] { background: #FFFFFF; border: 1px solid #D5E3F5; border-radius: 12px; padding: 6px; }
+    .takeaway { background: #E8F1FD; border-left: 4px solid #2F6FDE; border-radius: 8px; padding: 0.6rem 0.9rem; margin-top: 0.5rem;
+        color: #0B1F3A; font-size: 0.95rem; line-height: 1.35; }
     .takeaway.tall { min-height: 5.6rem; }
-    .fg { display: flex; flex-wrap: wrap; gap: 1.1rem; background: #F5F0E8; border: 1px solid #D4C7B8; border-radius: 12px; padding: 0.8rem 1rem; margin-bottom: 0.8rem; }
+    .fg { display: flex; flex-wrap: wrap; gap: 1.1rem; background: #FFFFFF; border: 1px solid #D5E3F5; border-radius: 12px; padding: 0.8rem 1rem; margin-bottom: 0.8rem; }
     .fgg { padding: 0.3rem 0.6rem; border-radius: 10px; }
-    .fgg.absent { background: #E5DCD0; }
-    .fgl { font-family: 'Barlow Condensed', sans-serif; font-weight: 700; font-size: 0.85rem; text-transform: uppercase; letter-spacing: 0.08em; color: #454832; margin-bottom: 0.4rem; }
+    .fgg.absent { background: #E8F1FD; }
+    .fgl { font-family: 'Barlow Condensed', sans-serif; font-weight: 700; font-size: 0.85rem; text-transform: uppercase; letter-spacing: 0.08em; color: #35507A; margin-bottom: 0.4rem; }
     .fgrow { display: flex; gap: 0.5rem; }
     .fgc { display: flex; flex-direction: column; align-items: center; width: 76px; }
-    .fgb { width: 38px; height: 38px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-weight: 700; color: #E8DED0; }
-    .fgb.W { background: #879078; } .fgb.D { background: #A79581; color: #E8DED0; } .fgb.L { background: #B86F5E; }
-    .fgo { font-size: 0.72rem; color: #76685E; margin-top: 0.2rem; text-align: center; line-height: 1.1; }
-    .fgr { font-size: 0.82rem; font-weight: 600; color: #352A24; }
-    .question { font-family: 'Barlow Condensed', sans-serif; font-size: 1.3rem; font-weight: 700; margin-top: 0.8rem; color: #454832; }
-    hr { border-color: #D4C7B8 !important; }
-    @media (max-width: 760px) { .block-container { padding-top: 1rem; } .hero { padding: 1.2rem; } .stApp .hero h1 { font-size: 2rem; } }
+    .fgb { width: 38px; height: 38px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-weight: 700; color: #FFFFFF; }
+    .fgb.W { background: #2F6FDE; } .fgb.D { background: #B7C9E2; color: #0B1F3A; } .fgb.L { background: #E4605C; }
+    .fgo { font-size: 0.72rem; color: #35507A; margin-top: 0.2rem; text-align: center; line-height: 1.1; }
+    .fgr { font-size: 0.82rem; font-weight: 600; color: #0B1F3A; }
+    .question { font-family: 'Barlow Condensed', sans-serif; font-size: 1.3rem; font-weight: 700; margin-top: 0.8rem; color: #143C8A; }
     </style>
     """,
     unsafe_allow_html=True,
@@ -129,7 +120,8 @@ with st.sidebar.expander("Data source (optional)"):
 try:
     df, long_df, quality = load_everything(uploaded.getvalue() if uploaded else None)
 except Exception as err:
-    st.error(f"Could not load the data: {err}. Check that player_injuries_impact.csv is in the same folder as app.py (or in a data folder).")
+    st.error(f"Could not load the data: {err}. Upload player_injuries_impact.csv to the same GitHub folder as app.py (or into a folder called data), "
+             "then reboot the app.")
     st.stop()
 
 
@@ -196,14 +188,14 @@ def form_guide(rows):
 def style(fig, height=380, legend=True):
     """Apply one consistent look to every Plotly figure."""
     fig.update_layout(
-        height=height, margin=dict(l=10, r=10, t=50, b=10), template="plotly_white", paper_bgcolor="#F5F0E8", plot_bgcolor="#F5F0E8",
+        height=height, margin=dict(l=10, r=10, t=50, b=10), template="plotly_white", paper_bgcolor="#FFFFFF", plot_bgcolor="#FFFFFF",
         font=dict(family="Barlow, sans-serif", size=13, color=INK),
-        title=dict(font=dict(family="Barlow Condensed, sans-serif", size=21, color=DEEP)),
-        showlegend=legend, hoverlabel=dict(font_size=13, font_color="#352A24", bgcolor="#F5F0E8"),
-        legend=dict(font=dict(color=INK), bgcolor="rgba(245,240,232,0.96)", bordercolor="#C4B5A4", borderwidth=1),
+        title=dict(font=dict(family="Barlow Condensed, sans-serif", size=20)),
+        showlegend=legend, hoverlabel=dict(font_size=13, font_color=INK, bgcolor="#FFFFFF"),
+        legend=dict(font=dict(color=INK)),
     )
-    fig.update_xaxes(color=INK, gridcolor=GRID, linecolor="#B9AA99", zerolinecolor="#B9AA99")
-    fig.update_yaxes(color=INK, gridcolor=GRID, linecolor="#B9AA99", zerolinecolor="#B9AA99")
+    fig.update_xaxes(color=INK, gridcolor=GRID, linecolor="#B7C9E2")
+    fig.update_yaxes(color=INK, gridcolor=GRID, linecolor="#B7C9E2")
     return fig
 
 
@@ -337,33 +329,23 @@ with tab_pat:
         lx, ly = pitch_lines()
         fig.add_trace(go.Scatter(x=lx, y=ly, mode="lines", line=dict(color="#8DBCF7", width=1.6), hoverinfo="skip", showlegend=False))
         if not ps.empty:
-            sizes = 14 + 17 * np.sqrt(ps["injuries"] / max(float(ps["injuries"].max()), 1.0))
+            sizes = 26 + 54 * np.sqrt(ps["injuries"] / ps["injuries"].max())
             fig.add_trace(go.Scatter(
-                x=ps["x"], y=ps["y"], mode="markers+text", text=ps["injuries"], textposition="middle center", textfont=dict(color="#101B3D", size=11, family="Barlow Condensed, sans-serif"),
-                marker=dict(size=sizes, color=ps["avg_drop"], colorscale=DROP_SCALE, cmid=0, line=dict(color="#FFFFFF", width=2),
+                x=ps["x"], y=ps["y"], mode="markers+text", text=ps["injuries"], textfont=dict(color=INK, size=14, family="Barlow Condensed, sans-serif"),
+                marker=dict(size=sizes, color=ps["avg_drop"], colorscale=DROP_SCALE, cmid=0, line=dict(color="#FFFFFF", width=2.5),
                             showscale=True, colorbar=dict(title=dict(text="Avg team drop", font=dict(color=INK)),
                                                           tickfont=dict(color=INK), len=0.55, thickness=12, x=1.02)),
                 customdata=np.stack([ps["position"], ps["injuries"], ps["avg_days"].fillna(0), ps["avg_drop"].fillna(0)], axis=-1),
                 hovertemplate="<b>%{customdata[0]}</b><br>Injuries: %{customdata[1]}<br>Avg days out: %{customdata[2]:.0f}"
                               "<br>Avg team drop: %{customdata[3]:+.2f}<extra></extra>", showlegend=False))
-            # Keep role labels in a dedicated trace, offset away from the bubble markers.
-            label_offsets = {
-                "Goalkeeper": -7.5, "Left Back": -7.5, "Center Back": -8.5, "Right Back": -7.5,
-                "Defensive Midfielder": -8.0, "Central Midfielder": 10.0,
-                "Left Midfielder": -8.0, "Right Midfielder": -8.0,
-                "Attacking Midfielder": 9.0, "Left winger": -8.0, "Right winger": -8.0,
-                "Center Forward": -8.0,
-            }
-            label_y = [row.y + label_offsets.get(row.position, -6.0) for row in ps.itertuples()]
-            fig.add_trace(go.Scatter(x=ps["x"], y=label_y, mode="text", text=ps["position"],
-                                     textfont=dict(color="#DCE9FB", size=10), hoverinfo="skip", showlegend=False))
+            fig.add_trace(go.Scatter(x=ps["x"], y=ps["y"] - (sizes * 0.09 + 3.2), mode="text", text=ps["position"],
+                                     textfont=dict(color="#DCE9FB", size=11), hoverinfo="skip", showlegend=False))
         fig.add_annotation(x=PITCH_W / 2, y=-2.2, text="Attacking direction", showarrow=False, font=dict(color="#8DBCF7", size=12))
         fig.update_layout(title="Injury map: bubble size = injuries, colour = team drop when he is out",
                           xaxis=dict(visible=False, range=[-3, PITCH_W + 3], constrain="domain"),
-                          yaxis=dict(visible=False, range=[-8, PITCH_L + 4], scaleanchor="x", scaleratio=1),
-                          margin=dict(l=12, r=22, t=58, b=24), autosize=True)
-        fig = style(fig, 650, legend=False)
-        fig.update_layout(plot_bgcolor="#F5F0E8", paper_bgcolor="#F5F0E8")
+                          yaxis=dict(visible=False, range=[-4, PITCH_L + 4], scaleanchor="x", scaleratio=1))
+        fig = style(fig, 680, legend=False)
+        fig.update_layout(plot_bgcolor="#0B2350")
         st.plotly_chart(fig, width="stretch", theme=None)
     with pc2:
         if ps.empty:
@@ -405,7 +387,7 @@ with tab_pat:
     with c1:
         sc = fdf.dropna(subset=["age", "performance_drop_index"])
         fig = px.scatter(sc, x="age", y="performance_drop_index", color="position_group", opacity=0.65,
-                         color_discrete_sequence=["#5B5FEF", "#18B6A4", "#B86F5E", "#F6B94A"],
+                         color_discrete_sequence=[DEEP, BLUE, TEAL, SLATE],
                          hover_data={"player": True, "team": True, "injury_raw": True, "season": True},
                          labels={"age": "Player age", "performance_drop_index": "Team performance drop index",
                                  "position_group": "Position", "injury_raw": "Injury"},
@@ -529,21 +511,21 @@ with tab_play:
 
 with tab_3d:
     st.subheader("3D explorer: drag to rotate, scroll to zoom, double-click to reset")
-    st.caption("Rotate, zoom and hover to explore the data. Spherical markers encode individual injuries; their size and colour represent the selected variables. All views respond to the sidebar filters.")
-    axis_style = dict(backgroundcolor="#F5F0E8", gridcolor="#D4C7B8", showbackground=True, color=INK)
+    st.caption("These four charts are fully interactive in 3D and respond to the sidebar filters. Hover over any point for details.")
+    axis_style = dict(backgroundcolor="#F1F6FD", gridcolor="#D5E3F5", showbackground=True, color=INK)
 
     st.markdown("#### 1. Injury cube: age, time out and team impact")
     colour_choice = st.radio("Colour points by", ["Position group", "Injury type", "Star status"], horizontal=True)
     colour_col = {"Position group": "position_group", "Injury type": "injury_type", "Star status": "star_player"}[colour_choice]
     cube = fdf.dropna(subset=["age", "days_out", "performance_drop_index"]).assign(days_out=lambda x: x["days_out"].clip(lower=1))
-    cube = cube.assign(fifa_size=(cube["fifa_rating"].fillna(cube["fifa_rating"].median()) - 60).clip(lower=1))
+    cube = cube.assign(fifa_size=cube["fifa_rating"].fillna(cube["fifa_rating"].median()) - 60)
     if len(cube) < 3:
         st.info("Not enough injuries with complete data for a 3D cube with these filters.")
     else:
         fig = px.scatter_3d(cube, x="age", y="days_out", z="performance_drop_index", color=colour_col, size="fifa_size",
                             size_max=14, opacity=0.8, log_y=True,
-                            color_discrete_sequence=["#5B5FEF", "#18B6A4", "#91A8C4", "#B86F5E", "#F6B94A", "#9B72CF",
-                                                     "#263A9B", "#79D7C7", "#F28E5B", "#8B9BB8", "#E879F9", "#38BDF8", "#A3E635", "#7C8DB5", "#B86F5E"],
+                            color_discrete_sequence=[DEEP, BLUE, SKY, TEAL, SLATE, "#5B5BD6", "#A5C8F7", "#1B8FA3", "#3C4F76", "#8E9AF0",
+                                                     "#4A90C2", "#B7C9E2", "#0E7490", "#7C8DB5", CORAL],
                             hover_data={"player": True, "team": True, "injury_raw": True, "fifa_size": False},
                             labels={"age": "Age", "days_out": "Days out (log)", "performance_drop_index": "Team drop index",
                                     "position_group": "Position", "injury_type": "Injury type", "star_player": "Status",
@@ -561,7 +543,7 @@ with tab_3d:
     if heat3d.shape[0] < 2:
         st.info("Select at least two clubs to draw the 3D surface.")
     else:
-        fig = go.Figure(go.Surface(z=heat3d.values, x=SEASON_MONTHS, y=heat3d.index.tolist(), colorscale=[[0, "#263A9B"], [0.25, "#5B5FEF"], [0.55, "#18B6A4"], [0.8, "#91A8C4"], [1, "#F6B94A"]],
+        fig = go.Figure(go.Surface(z=heat3d.values, x=SEASON_MONTHS, y=heat3d.index.tolist(), colorscale=BLUE_SCALE,
                                    contours=dict(z=dict(show=True, usecolormap=True, project_z=True)),
                                    hovertemplate="Club: %{y}<br>Month: %{x}<br>Injuries: %{z}<extra></extra>",
                                    colorbar=dict(title="Injuries")))
@@ -579,7 +561,7 @@ with tab_3d:
         st.info("Not enough injuries with ratings before and after for this chart with the current filters.")
     else:
         fig = px.scatter_3d(rec3d, x="rating_before", y="rating_after", z="days_out", color="rating_change", log_z=True,
-                            color_continuous_scale=["#B86F5E", "#F5F0E8", "#18B6A4"], color_continuous_midpoint=0, opacity=0.85,
+                            color_continuous_scale=[CORAL, "#EEF5FD", BLUE], color_continuous_midpoint=0, opacity=0.85,
                             hover_data={"player": True, "team": True, "injury_raw": True},
                             labels={"rating_before": "Rating before", "rating_after": "Rating after", "days_out": "Days out (log)",
                                     "rating_change": "Rating change", "injury_raw": "Injury"},
@@ -616,7 +598,7 @@ with tab_3d:
                           "<br>Avg team drop: %{customdata[3]:+.2f}<extra></extra>", showlegend=False))
         fig.update_layout(title="Taller stems mean more injuries in that position (colour = team drop)",
                           scene=dict(xaxis=dict(visible=False), yaxis=dict(visible=False),
-                                     zaxis=dict(title="Injuries", showbackground=False, gridcolor="#D4C7B8", color=INK),
+                                     zaxis=dict(title="Injuries", showbackground=False, gridcolor="#D5E3F5", color=INK),
                                      aspectmode="manual", aspectratio=dict(x=0.6, y=1, z=0.55),
                                      camera=dict(eye=dict(x=1.5, y=-1.7, z=0.9))))
         st.plotly_chart(style(fig, 640, legend=False), width="stretch", theme=None)
