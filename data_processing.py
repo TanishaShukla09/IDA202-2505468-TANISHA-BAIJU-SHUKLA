@@ -1,3 +1,17 @@
+"""
+data_processing.py
+------------------
+Loading, cleaning and feature engineering for the Player Injuries Impact dataset.
+
+Pipeline (each step is its own function so it can be tested and explained):
+    load_data()          -> raw DataFrame (everything read as text)
+    clean_data()         -> typed, standardised DataFrame (one row per injury)
+    engineer_features()  -> adds analytical columns (rating change, drop index, ...)
+    to_long_format()     -> one row per match, used for the player timeline chart
+    resolve_result_gd_conflicts() -> logic check between result and goal difference
+    run_quality_checks() -> summary table of issues found, shown on the About tab
+    get_clean_data()     -> convenience wrapper used by the Streamlit app
+"""
 from __future__ import annotations
 
 import re
@@ -7,8 +21,21 @@ import numpy as np
 import pandas as pd
 
 _HERE = Path(__file__).parent
-DATA_PATH = next((p for p in [_HERE / "data" / "player_injuries_impact.csv", _HERE / "player_injuries_impact.csv"]
-                  if p.exists()), _HERE / "data" / "player_injuries_impact.csv")
+DATA_NAME = "player_injuries_impact.csv"
+
+
+def find_data_file():
+    """Look for the dataset next to this file, in a data folder, or anywhere in the project (any CSV with 'injur' in its name)."""
+    for candidate in (_HERE / "data" / DATA_NAME, _HERE / DATA_NAME):
+        if candidate.exists():
+            return candidate
+    for candidate in sorted(_HERE.rglob("*.csv")):
+        if "injur" in candidate.name.lower():
+            return candidate
+    return None
+
+
+DATA_PATH = find_data_file() or (_HERE / "data" / DATA_NAME)
 
 NA_TOKENS = ["N.A.", "N.A", "n.a.", "NA", "N/A", ""]   # text used for "missing" in the raw file
 RESULT_POINTS = {"win": 3, "draw": 1, "lose": 0}        # league points for a result
@@ -18,20 +45,6 @@ MATCH_NUMBERS = [1, 2, 3]
 SLOT_LABELS = {0: "Before -3", 1: "Before -2", 2: "Before -1", 3: "Absent 1", 4: "Absent 2",
                5: "Absent 3", 6: "After +1", 7: "After +2", 8: "After +3"}
 STAR_THRESHOLD = 82            # FIFA rating at or above this = "star player" (roughly the top fifth)
-VALID_RESULTS = {"win", "draw", "lose"}
-
-
-def required_columns() -> set[str]:
-    """Columns needed by the cleaning and feature-engineering pipeline."""
-    required = {"Team Name", "Name", "Position", "Age", "Season", "FIFA rating",
-                "Injury", "Date of Injury", "Date of return"}
-    for phase in PHASES:
-        for n in MATCH_NUMBERS:
-            # Results and goal difference are required for team-performance analysis.
-            # Player ratings are optional because some dataset versions omit ratings
-            # for matches missed during an injury; downstream calculations can handle NaN.
-            required.update({f"Match{n}_{phase}_Result", f"Match{n}_{phase}_GD"})
-    return required
 
 # Ordered rules: the FIRST pattern that matches decides the category.
 INJURY_RULES = [
@@ -65,9 +78,15 @@ MONTH_ORDER = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "O
 
 def load_data(path=None) -> pd.DataFrame:
     """Read the CSV as text so that tokens such as 'N.A.' and '6.1(S)' are not silently coerced.
-    `path` can be a file path or an open file object; None means the default dataset in data/."""
+    `path` can be a file path or an open file object; None means the default dataset in the project."""
     if path is None:
-        path = DATA_PATH
+        path = find_data_file()
+        if path is None:
+            top = sorted(p.name for p in _HERE.iterdir())
+            data_dir = _HERE / "data"
+            inside = sorted(p.name for p in data_dir.iterdir()) if data_dir.is_dir() else "(no data folder)"
+            raise FileNotFoundError(
+                f"{DATA_NAME} was not found. Files next to app.py: {top}. Files in data/: {inside}")
     return pd.read_csv(path, dtype=str, keep_default_na=False)
 
 
@@ -105,68 +124,25 @@ def categorise_injury(label: str) -> str:
 
 def clean_data(raw: pd.DataFrame) -> pd.DataFrame:
     """Standardise types, text and missing values. One row per injury."""
-    if not isinstance(raw, pd.DataFrame):
-        raise TypeError("clean_data() expects a pandas DataFrame.")
     df = raw.copy()
-    df.columns = [str(c).strip() for c in df.columns]
-    if df.columns.duplicated().any():
-        duplicates = sorted(set(df.columns[df.columns.duplicated()].tolist()))
-        raise ValueError(f"The source file has duplicate column names: {duplicates}")
-    missing = sorted(required_columns() - set(df.columns))
-    if missing:
-        preview = ", ".join(missing[:8]) + (" …" if len(missing) > 8 else "")
-        raise ValueError(
-            "The injury dataset is missing required columns: " + preview + ". "
-            "Check that you selected the expected player_injuries_impact.csv file."
-        )
-    # Some dataset versions omit ratings for matches missed during an injury.
-    # Add absent rating columns as missing values so other analyses still work.
-    # Rating-based summaries will remain missing rather than being fabricated.
-    for phase in PHASES:
-        for n in MATCH_NUMBERS:
-            rating_col = f"Match{n}_{phase}_Player_rating"
-            if rating_col not in df.columns:
-                df[rating_col] = np.nan
-    # Strip text columns only. This keeps clean_data safe when called directly
-    # with a DataFrame that already contains numeric columns (not just load_data's strings).
-    for col in df.select_dtypes(include=["object", "string"]).columns:
-        df[col] = df[col].map(lambda value: value.strip() if isinstance(value, str) else value)
-    # Treat common missing-value spellings consistently, regardless of case.
-    missing_tokens = {token.lower() for token in NA_TOKENS}
-    df = df.applymap(lambda value: np.nan if isinstance(value, str) and value.lower() in missing_tokens else value)
-    # Parse numeric columns explicitly. Values outside plausible domain ranges are
-    # treated as missing rather than allowed to distort averages and charts.
+    df.columns = [c.strip() for c in df.columns]
+    df = df.apply(lambda col: col.str.strip())
+    df = df.replace({token: np.nan for token in NA_TOKENS})
     df["Age"] = pd.to_numeric(df["Age"], errors="coerce")
-    df.loc[~df["Age"].between(15, 60), "Age"] = np.nan
     df["FIFA rating"] = pd.to_numeric(df["FIFA rating"], errors="coerce")
-    df.loc[~df["FIFA rating"].between(0, 100), "FIFA rating"] = np.nan
     for col in [c for c in df.columns if c.endswith("_GD")]:
         df[col] = pd.to_numeric(df[col], errors="coerce")
-    # Match ratings are parsed below; malformed values become NaN.
 
     # Player ratings: split '6.1(S)' into a number and a substitute flag
     for col in [c for c in df.columns if c.endswith("Player_rating")]:
         parsed = df[col].map(parse_rating)
-        values = parsed.map(lambda t: t[0])
-        # Football match ratings are conventionally on a 0–10 scale. Invalid
-        # out-of-range values are excluded from rating summaries.
-        values = values.where(values.between(0, 10))
-        df[col] = values
-        df[col.replace("Player_rating", "is_sub")] = parsed.map(lambda t: t[1]) & values.notna()
+        df[col] = parsed.map(lambda t: t[0])
+        df[col.replace("Player_rating", "is_sub")] = parsed.map(lambda t: t[1])
     df["injury_date"] = df["Date of Injury"].fillna("").map(parse_date)
     df["return_date"] = df["Date of return"].fillna("").map(parse_date)
-    df["still_injured"] = df["Date of return"].fillna("").astype(str).str.lower().eq("present")
-    # Result labels are categorical inputs to points calculations; normalise their case/spacing.
-    result_cols = [c for c in df.columns if c.endswith("_Result")]
-    for col in result_cols:
-        df[col] = df[col].astype("string").str.strip().str.lower().replace({"": pd.NA})
-        # Unknown result labels must not silently enter points-per-match metrics.
-        df.loc[~df[col].isin(VALID_RESULTS) & df[col].notna(), col] = pd.NA
-    df["Name"] = df["Name"].astype("string").str.strip().str.title()
-    df["Position"] = df["Position"].astype("string").str.strip()
-    df["Team Name"] = df["Team Name"].astype("string").str.strip()
-    df["Season"] = df["Season"].astype("string").str.strip()
-    df["Injury"] = df["Injury"].astype("string").str.strip()
+    df["still_injured"] = df["Date of return"].fillna("").str.lower().eq("present")
+    df["Name"] = df["Name"].str.title()
+    df["Position"] = df["Position"].str.strip()
     df["position_group"] = df["Position"].map(POSITION_GROUPS).fillna("Other")
     df["injury_type"] = df["Injury"].map(categorise_injury)
     df = df.rename(columns={"Team Name": "team", "Name": "player", "Position": "position", "Age": "age",
@@ -257,22 +233,11 @@ def to_long_format(df: pd.DataFrame) -> pd.DataFrame:
 def run_quality_checks(raw: pd.DataFrame, df: pd.DataFrame, long_df: pd.DataFrame, n_conflicts: int = 0) -> pd.DataFrame:
     """Return a small table of what was found and fixed. Useful evidence for the README and About tab."""
     sub_flags = int(sum(df[c].sum() for c in df.columns if c.endswith("is_sub")))
-    na_cells = int(raw.apply(lambda col: col.astype("string").str.strip().str.lower().isin(
-        {token.lower() for token in NA_TOKENS})).sum().sum())
-    invalid_age = int(pd.to_numeric(raw["Age"], errors="coerce").notna().sum() - df["age"].notna().sum())
-    invalid_fifa = int(pd.to_numeric(raw["FIFA rating"], errors="coerce").notna().sum() - df["fifa_rating"].notna().sum())
-    invalid_results = 0
-    for col in [c for c in raw.columns if c.endswith("_Result")]:
-        values = raw[col].astype("string").str.strip().str.lower()
-        values = values.mask(values.isin({token.lower() for token in NA_TOKENS}))
-        invalid_results += int((~values.isin(VALID_RESULTS) & values.notna()).sum())
+    na_cells = int(raw.apply(lambda col: col.str.strip().isin(NA_TOKENS)).sum().sum())
     checks = [
         ("Rows in raw file", len(raw), "-"),
         ("Rows after cleaning", len(df), "Exact duplicate rows removed" if len(raw) != len(df) else "No exact duplicates found"),
         ("Cells written as 'N.A.' in the raw file", na_cells, "Converted to real missing values"),
-        ("Age values invalid or outside 15–60", invalid_age, "Set to missing; retained the injury record"),
-        ("FIFA ratings invalid or outside 0–100", invalid_fifa, "Set to missing; retained the injury record"),
-        ("Unknown match-result labels", invalid_results, "Excluded from result-based metrics"),
         ("Distinct injury labels (raw, ignoring case)", int(raw["Injury"].str.strip().str.lower().nunique()),
          f"Grouped into {df['injury_type'].nunique()} categories"),
         ("Injury dates that could not be parsed", int(df["injury_date"].isna().sum()), "Flexible date parser handles mixed formats"),
@@ -285,14 +250,8 @@ def run_quality_checks(raw: pd.DataFrame, df: pd.DataFrame, long_df: pd.DataFram
 
 
 def get_clean_data(path=None):
-    """Run the full pipeline. Returns (clean_df, long_df, quality_table).
-
-    `path` may be a filesystem path or a file-like object (e.g. Streamlit upload).
-    The return signature is intentionally stable for compatibility with app.py.
-    """
+    """Run the full pipeline. Returns (clean_df, long_df, quality_table)."""
     raw = load_data(path)
-    if raw.empty:
-        raise ValueError("The selected CSV contains no data rows.")
     cleaned, n_conflicts = resolve_result_gd_conflicts(clean_data(raw))
     df = engineer_features(cleaned)
     long_df = to_long_format(df)
