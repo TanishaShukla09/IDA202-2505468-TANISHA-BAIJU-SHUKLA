@@ -8,7 +8,9 @@ Pipeline (each step is its own function so it can be tested and explained):
     clean_data()         -> typed, standardised DataFrame (one row per injury)
     engineer_features()  -> adds analytical columns (rating change, drop index, ...)
     to_long_format()     -> one row per match, used for the player timeline chart
+    repair_return_dates() -> fixes year typos in return dates
     resolve_result_gd_conflicts() -> logic check between result and goal difference
+    missing_value_report() -> missing values per column group and how they are handled
     run_quality_checks() -> summary table of issues found, shown on the About tab
     get_clean_data()     -> convenience wrapper used by the Streamlit app
 """
@@ -44,6 +46,8 @@ PHASE_LABELS = {"before_injury": "Before injury", "missed_match": "Player absent
 MATCH_NUMBERS = [1, 2, 3]
 SLOT_LABELS = {0: "Before -3", 1: "Before -2", 2: "Before -1", 3: "Absent 1", 4: "Absent 2",
                5: "Absent 3", 6: "After +1", 7: "After +2", 8: "After +3"}
+SEVERITY_LABELS = ["Slight (0-1 d)", "Minimal (2-3 d)", "Mild (4-7 d)", "Moderate (8-28 d)", "Severe (29+ d)"]
+VALID_YEARS = (2015, 2026)     # any date outside this range is a typing error (the file contains 'Mar 7, 0202')
 STAR_THRESHOLD = 82            # FIFA rating at or above this = "star player" (roughly the top fifth)
 
 # Ordered rules: the FIRST pattern that matches decides the category.
@@ -105,6 +109,14 @@ def parse_date(value: str) -> pd.Timestamp:
     return pd.to_datetime(value, errors="coerce")
 
 
+def parse_date_checked(value: str) -> pd.Timestamp:
+    """parse_date plus a sanity check: dates with an impossible year become missing instead of being kept."""
+    parsed = parse_date(value)
+    if pd.notna(parsed) and not (VALID_YEARS[0] <= parsed.year <= VALID_YEARS[1]):
+        return pd.NaT
+    return parsed
+
+
 def parse_rating(value) -> tuple[float, bool]:
     """'6.1(S)' -> (6.1, True) where True means the player came on as a substitute. 'N.A.' -> (nan, False)."""
     match = re.fullmatch(r"\s*(\d+(?:\.\d+)?)\s*(\(S\))?\s*", str(value))
@@ -138,10 +150,10 @@ def clean_data(raw: pd.DataFrame) -> pd.DataFrame:
         parsed = df[col].map(parse_rating)
         df[col] = parsed.map(lambda t: t[0])
         df[col.replace("Player_rating", "is_sub")] = parsed.map(lambda t: t[1])
-    df["injury_date"] = df["Date of Injury"].fillna("").map(parse_date)
-    df["return_date"] = df["Date of return"].fillna("").map(parse_date)
+    df["injury_date"] = df["Date of Injury"].fillna("").map(parse_date_checked)
+    df["return_date"] = df["Date of return"].fillna("").map(parse_date_checked)
     df["still_injured"] = df["Date of return"].fillna("").str.lower().eq("present")
-    df["Name"] = df["Name"].str.title()
+    df["Name"] = df["Name"].str.replace(r"\s+", " ", regex=True).str.title()
     df["Position"] = df["Position"].str.strip()
     df["position_group"] = df["Position"].map(POSITION_GROUPS).fillna("Other")
     df["injury_type"] = df["Injury"].map(categorise_injury)
@@ -151,6 +163,36 @@ def clean_data(raw: pd.DataFrame) -> pd.DataFrame:
     df = df.drop_duplicates().reset_index(drop=True)
     df.insert(0, "injury_id", df.index + 1)
     return df
+
+
+def repair_return_dates(df: pd.DataFrame) -> tuple[pd.DataFrame, int]:
+    """Fix obvious year typos in the return date, e.g. 'Mar 7, 0202' (unreadable year) or a return date a year
+    before the injury ('Jan 21, 2019' for an injury on 'Jan 1, 2020').
+      1. Unreadable year  -> use the injury year (or the next year if that would still be before the injury).
+      2. Return before injury -> add one year if that gives an absence of 0 to 365 days.
+    Anything that cannot be repaired this way is left for the later checks. Returns (df, n_repaired)."""
+    df = df.copy()
+    repaired = 0
+    for idx, row in df.iterrows():
+        if row["still_injured"] or pd.isna(row["injury_date"]):
+            continue
+        ret, inj = row["return_date"], row["injury_date"]
+        if pd.isna(ret):
+            text = str(row["Date of return"])
+            if text in ("nan", "None", "") or text.lower() == "present":
+                continue
+            parsed = pd.to_datetime(re.sub(r"\b\d{4}\b", str(inj.year), re.sub(r",(?=\S)", ", ", text)), errors="coerce")
+            if pd.notna(parsed):
+                if parsed < inj:
+                    parsed = parsed + pd.DateOffset(years=1)
+                df.at[idx, "return_date"] = parsed
+                repaired += 1
+        elif ret < inj:
+            candidate = ret + pd.DateOffset(years=1)
+            if 0 <= (candidate - inj).days <= 365:
+                df.at[idx, "return_date"] = candidate
+                repaired += 1
+    return df, repaired
 
 
 def resolve_result_gd_conflicts(df: pd.DataFrame) -> tuple[pd.DataFrame, int]:
@@ -196,6 +238,8 @@ def engineer_features(df: pd.DataFrame) -> pd.DataFrame:
     df["performance_drop_index"] = df["gd_before_injury"] - df["gd_missed_match"]       # positive = team worse without player
     df["points_drop"] = df["points_before_injury"] - df["points_missed_match"]
 
+    # Severity bands from the football injury consensus statement (Fuller et al., 2006), based on days of absence
+    df["severity"] = pd.cut(df["days_out"], bins=[-1, 1, 3, 7, 28, np.inf], labels=SEVERITY_LABELS)
     df["matches_missed"] = df[[f"Match{n}_missed_match_Result" for n in MATCH_NUMBERS]].notna().sum(axis=1)
     df["star_player"] = np.where(df["fifa_rating"] >= STAR_THRESHOLD, "Star (FIFA 82+)", "Squad player")
     df["age_group"] = pd.cut(df["age"], bins=[0, 22, 26, 30, 100], labels=["Under 23", "23-26", "27-30", "31+"])
@@ -230,7 +274,7 @@ def to_long_format(df: pd.DataFrame) -> pd.DataFrame:
     return long_df.sort_values(["injury_id", "slot"]).reset_index(drop=True)
 
 
-def run_quality_checks(raw: pd.DataFrame, df: pd.DataFrame, long_df: pd.DataFrame, n_conflicts: int = 0) -> pd.DataFrame:
+def run_quality_checks(raw: pd.DataFrame, df: pd.DataFrame, long_df: pd.DataFrame, n_conflicts: int = 0, n_dates_repaired: int = 0) -> pd.DataFrame:
     """Return a small table of what was found and fixed. Useful evidence for the README and About tab."""
     sub_flags = int(sum(df[c].sum() for c in df.columns if c.endswith("is_sub")))
     na_cells = int(raw.apply(lambda col: col.str.strip().isin(NA_TOKENS)).sum().sum())
@@ -238,24 +282,51 @@ def run_quality_checks(raw: pd.DataFrame, df: pd.DataFrame, long_df: pd.DataFram
         ("Rows in raw file", len(raw), "-"),
         ("Rows after cleaning", len(df), "Exact duplicate rows removed" if len(raw) != len(df) else "No exact duplicates found"),
         ("Cells written as 'N.A.' in the raw file", na_cells, "Converted to real missing values"),
+        ("Distinct player names (raw)", int(raw["Name"].str.strip().nunique()),
+         f"{df['player'].nunique()} after fixing case and spacing (e.g. 'van' vs 'Van')"),
         ("Distinct injury labels (raw, ignoring case)", int(raw["Injury"].str.strip().str.lower().nunique()),
          f"Grouped into {df['injury_type'].nunique()} categories"),
-        ("Injury dates that could not be parsed", int(df["injury_date"].isna().sum()), "Flexible date parser handles mixed formats"),
         ("Players still injured ('Present')", int(df["still_injured"].sum()), "Flagged; excluded from duration statistics"),
-        ("Return date before injury date", int(df["date_issue"].sum()), "Duration set to missing, row kept"),
+        ("Return dates with a year typo", n_dates_repaired, "Repaired: impossible year ('Mar 7, 0202') or a return dated a year before the injury"),
+        ("Return date still before injury date", int(df["date_issue"].sum()), "Duration set to missing, row kept"),
         ("Ratings marked as substitute '(S)'", sub_flags, "Split into rating + is_sub flag"),
         ("Matches where result and goal difference disagree", n_conflicts, "Goal difference set to missing, result kept"),
     ]
     return pd.DataFrame(checks, columns=["Check", "Count", "Action taken"])
 
 
+def missing_value_report(raw: pd.DataFrame) -> pd.DataFrame:
+    """Share of missing cells for each group of columns, and how each group is handled."""
+    def share(cols):
+        block = raw[cols].apply(lambda col: col.str.strip())
+        return round(100 * block.isin(NA_TOKENS).to_numpy().mean(), 1), block.size
+    groups = [
+        ("Player rating before injury", [c for c in raw.columns if "before_injury" in c and c.endswith("Player_rating")],
+         "Left missing. Average rating uses only the matches that have a rating (never filled with 0)."),
+        ("Player rating after return", [c for c in raw.columns if "after_injury" in c and c.endswith("Player_rating")],
+         "Left missing. Average rating uses only the matches that have a rating."),
+        ("Goal difference (all 9 match slots)", [c for c in raw.columns if c.endswith("_GD")],
+         "Left missing. Phase averages ignore missing matches; 59 conflicting values also set to missing."),
+        ("Match result (all 9 match slots)", [c for c in raw.columns if c.endswith("_Result")],
+         "Left missing. Points are only counted for matches that were played and recorded."),
+        ("Return date", ["Date of return"],
+         "'Present' = still injured (flagged); year typos repaired; the rest left missing."),
+    ]
+    rows = []
+    for label, cols, how in groups:
+        pct, cells = share(cols)
+        rows.append((label, cells, pct, how))
+    return pd.DataFrame(rows, columns=["Column group", "Cells", "Missing %", "How it was handled"])
+
+
 def get_clean_data(path=None):
     """Run the full pipeline. Returns (clean_df, long_df, quality_table)."""
     raw = load_data(path)
-    cleaned, n_conflicts = resolve_result_gd_conflicts(clean_data(raw))
+    repaired, n_dates = repair_return_dates(clean_data(raw))
+    cleaned, n_conflicts = resolve_result_gd_conflicts(repaired)
     df = engineer_features(cleaned)
     long_df = to_long_format(df)
-    quality = run_quality_checks(raw, df, long_df, n_conflicts)
+    quality = run_quality_checks(raw, df, long_df, n_conflicts, n_dates)
     return df, long_df, quality
 
 
