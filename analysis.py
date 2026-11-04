@@ -186,6 +186,97 @@ def star_vs_squad_test(df: pd.DataFrame) -> dict:
             "t": t, "p": p}
 
 
+CORR_LABELS = {"age": "Age", "fifa_rating": "FIFA rating", "days_out": "Days out", "rating_before": "Rating before",
+               "rating_after": "Rating after", "rating_change": "Rating change", "performance_drop_index": "Team drop index",
+               "points_drop": "Points drop"}
+
+
+def correlation_matrix(df: pd.DataFrame) -> pd.DataFrame:
+    """Pearson correlation matrix of the numeric player and team metrics."""
+    return df[list(CORR_LABELS)].corr(method="pearson").rename(index=CORR_LABELS, columns=CORR_LABELS).round(2)
+
+
+def severity_impact(df: pd.DataFrame) -> pd.DataFrame:
+    """Team impact by injury severity band (football consensus bands based on days absent)."""
+    out = (df.dropna(subset=["severity"])
+             .groupby("severity", observed=True)
+             .agg(cases=("injury_id", "count"), avg_days_out=("days_out", "mean"),
+                  avg_drop_index=("performance_drop_index", "mean"), avg_points_drop=("points_drop", "mean"),
+                  avg_rating_change=("rating_change", "mean"))
+             .reset_index())
+    return out.round(2)
+
+
+def regression_model(df: pd.DataFrame) -> dict:
+    """Standardised OLS regression of the team drop index on age, FIFA rating and log(days out).
+    Coefficients are the change in the drop index (goals per match) for a 1 standard deviation change in the predictor."""
+    data = df[["performance_drop_index", "age", "fifa_rating", "days_out"]].dropna()
+    data = data.assign(log_days=np.log1p(data["days_out"]))
+    names = {"age": "Age", "fifa_rating": "FIFA rating", "log_days": "Days out (log)"}
+    n = len(data)
+    X = data[list(names)]
+    if n < 20 or (X.std(ddof=0) == 0).any():
+        return {"n": n}
+    Z = (X - X.mean()) / X.std(ddof=0)
+    A = np.column_stack([np.ones(n), Z.values])
+    y = data["performance_drop_index"].values
+    beta = np.linalg.lstsq(A, y, rcond=None)[0]
+    resid = y - A @ beta
+    k, dof = A.shape[1], n - A.shape[1]
+    sigma2 = (resid @ resid) / dof
+    se = np.sqrt(np.diag(sigma2 * np.linalg.inv(A.T @ A)))
+    t_vals = beta / se
+    p_vals = 2 * stats.t.sf(np.abs(t_vals), dof)
+    r2 = 1 - (resid @ resid) / ((y - y.mean()) ** 2).sum()
+    adj_r2 = 1 - (1 - r2) * (n - 1) / dof
+    f_stat = (r2 / (k - 1)) / ((1 - r2) / dof)
+    table = pd.DataFrame({"Predictor": list(names.values()), "Coefficient (goals per 1 SD)": beta[1:], "Std error": se[1:],
+                          "t": t_vals[1:], "p-value": p_vals[1:]}).round(3)
+    return {"n": n, "r2": r2, "adj_r2": adj_r2, "f": f_stat, "f_p": stats.f.sf(f_stat, k - 1, dof), "table": table}
+
+
+def robustness_table(df: pd.DataFrame) -> pd.DataFrame:
+    """Each parametric test next to a non-parametric check that does not assume normal data.
+    If both p-values lead to the same conclusion, the result does not depend on the normality assumption."""
+    rows = []
+
+    def add(question, param_name, p_param, nonparam_name, p_non, n):
+        rows.append({"Question": question, "Parametric test": param_name, "p": p_param,
+                     "Non-parametric check": nonparam_name, "p (check)": p_non, "n": n,
+                     "Same conclusion at 5%?": "n/a" if np.isnan(p_param) or np.isnan(p_non) else ("Yes" if (p_param < 0.05) == (p_non < 0.05) else "No")})
+
+    s = df["performance_drop_index"].dropna()
+    if len(s) >= 10 and s.nunique() > 1:
+        add("Team does worse without the player?", "One-sample t-test", stats.ttest_1samp(s, 0.0).pvalue,
+            "Wilcoxon signed-rank", stats.wilcoxon(s, zero_method="wilcox").pvalue, len(s))
+    both = df[["rating_before", "rating_after"]].dropna()
+    if len(both) >= 10 and (both["rating_after"] - both["rating_before"]).nunique() > 1:
+        add("Rating changes after the injury?", "Paired t-test", stats.ttest_rel(both["rating_after"], both["rating_before"]).pvalue,
+            "Wilcoxon signed-rank", stats.wilcoxon(both["rating_after"], both["rating_before"]).pvalue, len(both))
+    star = df.loc[df["star_player"].str.startswith("Star"), "performance_drop_index"].dropna()
+    squad = df.loc[~df["star_player"].str.startswith("Star"), "performance_drop_index"].dropna()
+    if len(star) >= 5 and len(squad) >= 5:
+        add("Star players hurt the team more?", "Welch t-test", stats.ttest_ind(star, squad, equal_var=False).pvalue,
+            "Mann-Whitney U", stats.mannwhitneyu(star, squad, alternative="two-sided").pvalue, len(star) + len(squad))
+    ag = df[["age", "performance_drop_index"]].dropna()
+    if len(ag) >= 10 and ag["age"].nunique() > 1 and ag["performance_drop_index"].nunique() > 1:
+        add("Older players hurt the team more?", "Pearson correlation", stats.pearsonr(ag["age"], ag["performance_drop_index"])[1],
+            "Spearman correlation", stats.spearmanr(ag["age"], ag["performance_drop_index"])[1], len(ag))
+    out = pd.DataFrame(rows)
+    if not out.empty:
+        out[["p", "p (check)"]] = out[["p", "p (check)"]].round(3)
+    return out
+
+
+def correlation_strength(r: float) -> str:
+    """Plain-English size of a correlation coefficient."""
+    if r is None or np.isnan(r):
+        return "not available"
+    size = abs(r)
+    word = "very weak" if size < 0.1 else "weak" if size < 0.3 else "moderate" if size < 0.5 else "strong"
+    return f"{word} {'positive' if r > 0 else 'negative'}"
+
+
 def significance_label(p: float) -> str:
     if np.isnan(p):
         return "not enough data"
