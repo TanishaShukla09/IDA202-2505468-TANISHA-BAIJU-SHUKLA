@@ -21,7 +21,7 @@ import streamlit as st
 from plotly.subplots import make_subplots
 
 import analysis as an
-from data_processing import PHASE_LABELS, SLOT_LABELS, get_clean_data
+from data_processing import PHASE_LABELS, SLOT_LABELS, get_clean_data, load_data, missing_value_report
 
 THEME_TOML = """[theme]
 base = "light"
@@ -253,27 +253,46 @@ tab_over, tab_pat, tab_play, tab_3d, tab_ins, tab_about = st.tabs(
 
 with tab_over:
     st.subheader("Which injuries hurt the team most, and what happens while a player is out?")
-    min_cases = st.slider("Minimum injuries per type", 3, 30, 10,
-                          help="Types with only a few cases are mostly noise, so they are hidden.")
+    mode_col, slider_col = st.columns([2, 3])
+    mode = mode_col.radio("Rank injuries by", ["Injury category", "Individual injuries"], horizontal=True)
+    min_cases = slider_col.slider("Minimum injuries per category", 3, 30, 10, disabled=(mode != "Injury category"),
+                                  help="Categories with only a few cases are mostly noise, so they are hidden.")
     c1, c2 = st.columns([3, 2])
 
     with c1:
-        impact = an.injury_type_impact(fdf, min_cases).head(10)
-        if impact.empty:
-            st.info("No injury type has that many cases with the current filters. Lower the minimum.")
+        if mode == "Injury category":
+            impact = an.injury_type_impact(fdf, min_cases).head(10)
+            if impact.empty:
+                st.info("No injury category has that many cases with the current filters. Lower the minimum.")
+            else:
+                impact = impact.assign(
+                    Effect=np.where(impact["avg_drop_index"] > 0, "Team did worse", "Team did better or the same"))
+                fig = px.bar(impact.sort_values("avg_drop_index"), x="avg_drop_index", y="injury_type", orientation="h",
+                             color="Effect", color_discrete_map={"Team did worse": CORAL, "Team did better or the same": BLUE},
+                             hover_data={"cases": True, "avg_days_out": ":.0f", "avg_points_drop": ":.2f", "Effect": False},
+                             labels={"avg_drop_index": "Average goal difference lost per match", "injury_type": "",
+                                     "cases": "Injuries", "avg_days_out": "Avg days out", "avg_points_drop": "Points lost per match"},
+                             title="Top 10 injury categories by team performance drop")
+                st.plotly_chart(style(fig, 440, legend=False), width="stretch", theme=None)
+                worst = impact.iloc[0]
+                takeaway(f"After {worst['injury_type']} injuries ({int(worst['cases'])} cases) teams lost {fmt(worst['avg_drop_index'])} goals of "
+                         "goal difference per match. Red bars mean the team did worse without the player; blue bars mean it did no worse.", tall=True)
         else:
-            impact = impact.assign(
-                Effect=np.where(impact["avg_drop_index"] > 0, "Team did worse", "Team did better or the same"))
-            fig = px.bar(impact.sort_values("avg_drop_index"), x="avg_drop_index", y="injury_type", orientation="h",
-                         color="Effect", color_discrete_map={"Team did worse": CORAL, "Team did better or the same": BLUE},
-                         hover_data={"cases": True, "avg_days_out": ":.0f", "avg_points_drop": ":.2f", "Effect": False},
-                         labels={"avg_drop_index": "Average goal difference lost per match", "injury_type": "",
-                                 "cases": "Injuries", "avg_days_out": "Avg days out", "avg_points_drop": "Points lost per match"},
-                         title="Top 10 injury types by team performance drop")
-            st.plotly_chart(style(fig, 440, legend=False), width="stretch", theme=None)
-            worst = impact.iloc[0]
-            takeaway(f"After {worst['injury_type']} injuries ({int(worst['cases'])} cases) teams lost {fmt(worst['avg_drop_index'])} goals of "
-                     "goal difference per match. Red bars mean the team did worse without the player; blue bars mean it did no worse.", tall=True)
+            cases = an.top_impact_injuries(fdf, 10)
+            if cases.empty:
+                st.info("No injuries with a measured team drop for these filters.")
+            else:
+                cases = cases.assign(label=cases["player"] + " (" + cases["team"] + ", " + cases["injury_raw"].fillna("injury").str.lower() + ")")
+                fig = px.bar(cases.sort_values("performance_drop_index"), x="performance_drop_index", y="label", orientation="h",
+                             color_discrete_sequence=[CORAL], hover_data={"season": True, "days_out": ":.0f", "points_drop": ":.2f", "label": False},
+                             labels={"performance_drop_index": "Goal difference lost per match", "label": "", "season": "Season",
+                                     "days_out": "Days out", "points_drop": "Points lost per match"},
+                             title="Top 10 individual injuries by team performance drop")
+                st.plotly_chart(style(fig, 440, legend=False), width="stretch", theme=None)
+                top_case = cases.iloc[0]
+                takeaway(f"The biggest single drop followed {top_case['player']}'s {str(top_case['injury_raw']).lower()} "
+                         f"({fmt(top_case['performance_drop_index'])} goals per match). Each case rests on at most three matches, "
+                         "so single injuries partly reflect chance, such as opponent strength.", tall=True)
 
     with c2:
         phase = an.phase_performance(flong)
@@ -301,7 +320,7 @@ with tab_over:
         st.plotly_chart(fig, width="stretch", theme=None)
         if len(rec):
             takeaway(f"{rec.iloc[-1]['Club']} won {fmt(rec.iloc[-1]['Win %'], 0)}% of matches with an injured player missing, "
-                     f"{rec.iloc[0]['Club']} only {fmt(rec.iloc[0]['Win %'], 0)}%. Club strength matters as much as who is injured.", tall=True)
+                     f"{rec.iloc[0]['Club']} only {fmt(rec.iloc[0]['Win %'], 0)}%. Win rates differ widely between clubs, so club strength is key context for any absence.", tall=True)
     with c4:
         cs = an.club_summary(fdf)
         fig = px.bar(cs.sort_values("injuries"), x="injuries", y="team", orientation="h", color="avg_drop_index",
@@ -316,6 +335,13 @@ with tab_over:
         top_club = cs.iloc[0]
         takeaway(f"{top_club['team']} recorded the most injuries ({int(top_club['injuries'])}). "
                  "Red bars are clubs whose results suffered more when injured players were missing.", tall=True)
+
+    with st.expander("Top 5 individual injuries with the highest impact on team performance"):
+        st.dataframe(an.top_impact_injuries(fdf, 5), hide_index=True, width="stretch",
+                     column_config={"player": "Player", "team": "Club", "season": "Season", "injury_raw": "Injury",
+                                    "days_out": "Days out", "performance_drop_index": "Goal difference lost per match",
+                                    "points_drop": "Points lost per match"})
+        st.caption("Impact is measured as goal difference (and points) per match before the injury minus while the player was absent.")
 
 with tab_pat:
     st.subheader("Where on the pitch and when in the season do injuries happen?")
@@ -371,7 +397,7 @@ with tab_pat:
         extra = (f" The biggest drop in results follows {solid_all.iloc[-1]['position']} injuries "
                  f"({fmt(solid_all.iloc[-1]['avg_drop'], 2, True)} goals per match)." if len(solid_all) else "")
         takeaway(f"{most_pos['position']} is the most injured position ({int(most_pos['injuries'])} injuries).{extra} "
-                 "Bubbles near the centre of the pitch are the busiest because several players share those roles.")
+                 "Counts also depend on how many players fill each role, so read the colour (team drop) as well as the bubble size.")
 
     heat = an.month_club_heatmap(fdf, SEASON_MONTHS)
     fig = px.imshow(heat, text_auto=True, aspect="auto", color_continuous_scale=BLUE_SCALE,
@@ -399,8 +425,8 @@ with tab_pat:
                                      line=dict(color=INK, dash="dash")))
         fig.add_hline(y=0, line_color="#B7C9E2", line_width=1)
         st.plotly_chart(style(fig, 440), width="stretch", theme=None)
-        takeaway(f"Correlation r = {fmt(corr['r'])} (n = {corr['n']}), {an.significance_label(corr['p'])}. "
-                 "A value near 0 means a player's age tells us almost nothing about how much the team suffers.", tall=True)
+        takeaway(f"Pearson correlation r = {fmt(corr['r'])} (n = {corr['n']}): a {an.correlation_strength(corr['r'])} relationship, "
+                 f"{an.significance_label(corr['p'])}. The dashed line is the least-squares trend.", tall=True)
     with c2:
         fig = px.box(fdf.dropna(subset=["performance_drop_index"]), x="star_player", y="performance_drop_index",
                      color="star_player", points="all", color_discrete_sequence=[DEEP, TEAL],
@@ -426,6 +452,40 @@ with tab_pat:
     st.plotly_chart(style(fig, 400, legend=False), width="stretch", theme=None)
     takeaway(f"Median absence is longest for {order[0]} injuries and shortest for {order[-1]}. "
              "The log scale keeps a handful of very long layoffs from squashing the rest.")
+
+    cm = an.correlation_matrix(fdf)
+    sev = an.severity_impact(fdf)
+    c5, c6 = st.columns(2)
+    with c5:
+        if sev.empty:
+            st.info("No injuries with a known length of absence for these filters.")
+        else:
+            sev = sev.assign(Effect=np.where(sev["avg_drop_index"] > 0, "Team did worse", "No worse"))
+            fig = px.bar(sev, x="severity", y="avg_drop_index", color="Effect",
+                         color_discrete_map={"Team did worse": CORAL, "No worse": BLUE},
+                         hover_data={"cases": True, "avg_days_out": ":.0f", "avg_points_drop": ":.2f", "Effect": False},
+                         labels={"severity": "Injury severity (days absent)", "avg_drop_index": "Avg goal difference lost per match",
+                                 "cases": "Injuries", "avg_days_out": "Avg days out", "avg_points_drop": "Points lost per match"},
+                         title="Team drop by injury severity")
+            st.plotly_chart(style(fig, 440, legend=False), width="stretch", theme=None)
+            r_days = cm.loc["Days out", "Team drop index"]
+            top_sev = sev.sort_values("avg_drop_index").iloc[-1]
+            takeaway(f"Severity bands follow the football injury consensus (Fuller et al., 2006). The largest average drop follows "
+                     f"{top_sev['severity']} injuries ({fmt(top_sev['avg_drop_index'], 2, True)} goals per match, {int(top_sev['cases'])} cases). "
+                     f"Across all injuries, days out and team drop have r = {fmt(r_days)}.", tall=True)
+    with c6:
+        fig = px.imshow(cm, text_auto=".2f", zmin=-1, zmax=1, aspect="auto", color_continuous_scale=[CORAL, "#FFFFFF", BLUE],
+                        labels=dict(color="Pearson r"), title="Correlation matrix of player and team metrics")
+        fig.update_xaxes(tickangle=-35)
+        st.plotly_chart(style(fig, 440, legend=False), width="stretch", theme=None)
+        links = cm["Team drop index"].drop(["Team drop index", "Points drop"]).dropna()
+        if len(links):
+            strongest = links.abs().sort_values().index[-1]
+            takeaway(f"The strongest link with the team drop index is {strongest} (r = {fmt(links[strongest], 2, True)}). "
+                     "Rating before and rating after are correlated simply because good players stay good. "
+                     "No metric explains the team drop strongly.", tall=True)
+        else:
+            takeaway("Not enough data with these filters for a correlation matrix.", tall=True)
 
 with tab_play:
     st.subheader("How do players and teams perform around an injury?")
@@ -468,8 +528,8 @@ with tab_play:
     fig.update_layout(title=title)
     st.plotly_chart(style(fig, 520, legend=False), width="stretch", theme=None)
     takeaway("Match 'Before -1' is the last game before the injury and 'After +1' the first game after returning. "
-             "No rating is recorded while the player is absent, so that part of the line is empty. "
-             "Blue bars are wins, grey draws and red defeats.")
+               "No rating is recorded while the player is absent, so that part of the line is empty. "
+               "Blue bars are wins, grey draws and red defeats.")
 
     st.markdown("#### Comeback leaderboard")
     max_inj = int(fdf.groupby("player")["injury_id"].count().max())
@@ -501,11 +561,16 @@ with tab_play:
                      labels={"rating_change": "Rating change after return", "player": ""}, title="Comeback players ranked by rating improvement")
         st.plotly_chart(style(fig, 380, legend=False), width="stretch", theme=None)
         takeaway("Ratings come from at most three matches before and after each injury, so a single big game can move a player a long way. "
-                 "Raise the minimum injuries slider to see steadier comebacks.")
+                   "Raise the minimum injuries slider to see steadier comebacks.")
 
     with st.expander("Player summary across injury phases (before, during absence, after return)"):
         st.write("Average team goal difference and player rating for every player, grouped across all of their injuries. Click a column heading to sort.")
         st.dataframe(an.player_phase_summary(fdf), hide_index=True, width="stretch")
+    with st.expander("Pivot table: average player rating before and after injury"):
+        group_names = {"team": "Club", "position_group": "Position group", "season": "Season", "injury_type": "Injury category",
+                       "severity": "Injury severity"}
+        group_by = st.selectbox("Group by", list(group_names), format_func=lambda c: group_names[c])
+        st.dataframe(an.pre_post_pivot(fdf, group_by), hide_index=True, width="stretch")
     with st.expander("Most injured players"):
         st.dataframe(an.most_injured_players(fdf, 15), hide_index=True, width="stretch")
 
@@ -535,8 +600,11 @@ with tab_3d:
                                      camera=dict(eye=dict(x=1.6, y=1.6, z=0.9))),
                           legend=dict(orientation="h", y=-0.05))
         st.plotly_chart(style(fig, 620), width="stretch", theme=None)
-        takeaway("Look for points high on the vertical axis (team did worse without the player). Rotate the cube to check whether "
-                 "older players or longer layoffs sit higher. In this data they mostly do not, which matches the weak correlation in the Insights tab.")
+        rho_days = cube["days_out"].corr(cube["performance_drop_index"], method="spearman")
+        rho_age = cube["age"].corr(cube["performance_drop_index"], method="spearman")
+        takeaway("Points high on the vertical axis are injuries after which the team did worse without the player. Rotate the cube to see whether "
+                 f"older players or longer layoffs sit higher. Spearman correlation with the team drop: days out {fmt(rho_days, 2, True)} "
+                 f"({an.correlation_strength(rho_days)}), age {fmt(rho_age, 2, True)} ({an.correlation_strength(rho_age)}).")
 
     st.markdown("#### 2. Injury landscape: clubs and months as a 3D surface")
     heat3d = an.month_club_heatmap(fdf, SEASON_MONTHS)
@@ -553,7 +621,7 @@ with tab_3d:
         st.plotly_chart(style(fig, 560, legend=False), width="stretch", theme=None)
         peak = heat3d.stack().idxmax()
         takeaway(f"The tallest peak is {peak[0]} in {peak[1]} ({int(heat3d.stack().max())} injuries). "
-                 "Drag the surface to look at it from the side and compare the winter months with the rest of the season.")
+                   "Drag the surface to look at it from the side and compare the winter months with the rest of the season.")
 
     st.markdown("#### 3. Recovery cube: rating before, rating after and time out")
     rec3d = fdf.dropna(subset=["rating_before", "rating_after", "days_out"]).assign(days_out=lambda x: x["days_out"].clip(lower=1))
@@ -569,8 +637,9 @@ with tab_3d:
         fig.update_layout(scene=dict(xaxis=axis_style, yaxis=axis_style, zaxis=axis_style,
                                      camera=dict(eye=dict(x=1.6, y=-1.6, z=0.8))))
         st.plotly_chart(style(fig, 580, legend=False), width="stretch", theme=None)
-        takeaway("Blue points improved after returning and red points declined. Most points sit near the diagonal where rating before "
-                 "equals rating after, so a longer layoff does not clearly lead to a worse return.")
+        rho_rec = rec3d["days_out"].corr(rec3d["rating_change"], method="spearman")
+        takeaway("Blue points improved after returning and red points declined; points near the diagonal returned at the same level. "
+                 f"Spearman correlation between days out and rating change: {fmt(rho_rec, 2, True)} ({an.correlation_strength(rho_rec)}).")
 
     st.markdown("#### 4. Pitch in 3D: injuries by position")
     ps3 = position_stats(fdf)
@@ -606,7 +675,6 @@ with tab_3d:
         takeaway(f"The tallest stem is {tallest['position']} with {int(tallest['injuries'])} injuries. Rotate the pitch to compare defence, "
                  "midfield and attack, and hover over a stem top for days out and team drop.")
 
-
 def build_insights(data: pd.DataFrame, match_data: pd.DataFrame) -> list[tuple[str, str]]:
     """Plain-English answers to the six research questions, computed from the filtered data."""
     out = []
@@ -618,7 +686,8 @@ def build_insights(data: pd.DataFrame, match_data: pd.DataFrame) -> list[tuple[s
                f"({fmt(top['avg_drop_index'], 2, True)} goals of goal difference per match, {int(top['cases'])} cases), while after "
                f"**{low['injury_type']}** injuries teams did {fmt(low['avg_drop_index'], 2, True)} (no worse). Across all filtered injuries the average drop is "
                f"{fmt(drop['mean'], 2, True)} (95% CI {fmt(drop['ci_low'], 2)} to {fmt(drop['ci_high'], 2)}), which is "
-               f"{an.significance_label(drop['p'])}. Individual injury types differ, but with this sample size the average team effect is small.")
+               f"{an.significance_label(drop['p'])}. " + ("Individual injury types differ, but the overall average team effect cannot be separated from chance."
+                                                          if drop["p"] >= 0.05 else "The average team effect is unlikely to be chance alone."))
     else:
         txt = "Not enough injuries with these filters to compare injury types (needs 10 or more per type)."
     out.append(("1. Which injuries led to the biggest team performance drop?", txt))
@@ -628,8 +697,8 @@ def build_insights(data: pd.DataFrame, match_data: pd.DataFrame) -> list[tuple[s
         b, w = rec.sort_values("Win %").iloc[-1], rec.sort_values("Win %").iloc[0]
         txt = (f"Teams collected {fmt(ph.iloc[0]['points_per_match'])} points per match before the injury, {fmt(ph.iloc[1]['points_per_match'])} "
                f"while the player was absent and {fmt(ph.iloc[2]['points_per_match'])} after return. By club, {b['Club']} won {fmt(b['Win %'], 0)}% "
-               f"of matches without the injured player, versus {fmt(w['Win %'], 0)}% for {w['Club']}. The gap between clubs is bigger than the "
-               f"gap between phases, so overall club strength matters more than any single absence.")
+               f"of matches without the injured player, versus {fmt(w['Win %'], 0)}% for {w['Club']}. The spread between clubs is much wider than the "
+               f"change between phases, which suggests club strength drives results more than any single absence (a descriptive comparison, not a tested effect).")
     else:
         txt = "No missed matches with these filters."
     out.append(("2. What was the team's win/loss record during player absence?", txt))
@@ -638,7 +707,8 @@ def build_insights(data: pd.DataFrame, match_data: pd.DataFrame) -> list[tuple[s
     if "mean_diff" in pt:
         txt = (f"Across {pt['n']} injuries with ratings before and after, the average rating change is {fmt(pt['mean_diff'], 2, True)} "
                f"(95% CI {fmt(pt['ci_low'], 2)} to {fmt(pt['ci_high'], 2)}; paired t-test p = {fmt(pt['p'], 2)}, {an.significance_label(pt['p'])}). "
-               f"In other words, players return to roughly the same level on average. ")
+               + ("In other words, there is no detectable change in players' ratings after they return. " if pt["p"] >= 0.05 else
+                  f"Players' ratings after returning are {'higher' if pt['mean_diff'] > 0 else 'lower'} on average. "))
         if len(best):
             txt += (f"The strongest individual comeback is **{best.iloc[0]['player']}** ({fmt(best.iloc[0]['rating_before'], 1)} to "
                     f"{fmt(best.iloc[0]['rating_after'], 1)}), a reminder that single-injury results are noisy.")
@@ -650,8 +720,9 @@ def build_insights(data: pd.DataFrame, match_data: pd.DataFrame) -> list[tuple[s
         mt = heat.sum()
         cell = heat.stack().idxmax()
         txt = (f"Injuries are most frequent in **{mt.idxmax()}** ({int(mt.max())}) and least frequent in {mt.idxmin()} ({int(mt.min())}). "
-               f"The busiest club-month is **{cell[0]} in {cell[1]}** ({int(heat.stack().max())} injuries). The winter peak lines up with the busiest "
-               f"stretch of the fixture calendar, and published research on professional football links short recovery between matches to more muscle injuries.")
+               f"The busiest club-month is **{cell[0]} in {cell[1]}** ({int(heat.stack().max())} injuries)."
+               + (" The peak falls in the busy winter fixture period, and published research on professional football links short recovery "
+                  "between matches to more muscle injuries." if mt.idxmax() in ("Dec", "Jan", "Feb") else ""))
     else:
         txt = "No injuries with these filters."
     out.append(("4. Are there specific months or clubs with frequent injury clusters?", txt))
@@ -664,7 +735,7 @@ def build_insights(data: pd.DataFrame, match_data: pd.DataFrame) -> list[tuple[s
             h = big.iloc[0]
             txt += (f"In terms of results, **{h['team']}** suffer most: their goal difference drops by {fmt(h['avg_drop_index'], 2, True)} per match "
                     f"when an injured player is missing and injuries keep players out for {fmt(h['avg_days_out'], 0)} days on average. ")
-        txt += "Raw injury counts and real impact on results are different rankings, and squad depth is the likely reason."
+        txt += "Raw injury counts and real impact on results are different rankings. Thinner squad depth is one possible explanation, which this data cannot test."
     else:
         txt = "No clubs with these filters."
     out.append(("5. Which clubs suffer most due to injuries?", txt))
@@ -672,7 +743,9 @@ def build_insights(data: pd.DataFrame, match_data: pd.DataFrame) -> list[tuple[s
     if "p" in st_t and not np.isnan(corr["r"]):
         txt = (f"Star players (FIFA 82+) are followed by an average drop of {fmt(st_t['mean_star'], 2, True)} versus {fmt(st_t['mean_squad'], 2, True)} "
                f"for other players (Welch t-test p = {fmt(st_t['p'], 2)}, {an.significance_label(st_t['p'])}). Age and drop index have a correlation of "
-               f"r = {fmt(corr['r'])} ({an.significance_label(corr['p'])}). Neither a player's rating nor age is a reliable predictor of how much the team suffers.")
+               f"r = {fmt(corr['r'])} ({an.significance_label(corr['p'])}). "
+               + ("Neither star status nor age shows a detectable link with how much the team suffers in this sample."
+                  if st_t["p"] >= 0.05 and corr["p"] >= 0.05 else "At least one of these shows a detectable link with the team drop; see the tests above."))
     else:
         txt = "Not enough data with these filters to compare star players or test age."
     out.append(("6. Do star players or older players hurt the team more when injured?", txt))
@@ -686,31 +759,64 @@ with tab_ins:
         st.markdown(f"<div class='question'>{q}</div>", unsafe_allow_html=True)
         st.write(a)
 
+    st.markdown("#### Statistical model: what predicts the team drop?")
+    model = an.regression_model(fdf)
+    if "r2" in model:
+        st.dataframe(model["table"], hide_index=True, width="stretch")
+        verdict = ("Together they explain almost none of the variation, so the team drop depends mostly on other things such as opponent, form and chance."
+                   if model["r2"] < 0.05 else "Together they explain part of the variation in the team drop.")
+        st.write(f"Standardised linear regression on {model['n']} injuries: R² = {fmt(model['r2'], 3)} (adjusted {fmt(model['adj_r2'], 3)}), "
+                 f"overall F-test p = {fmt(model['f_p'], 2)}, which is {an.significance_label(model['f_p'])}. "
+                 f"Each coefficient is the change in the team drop index (goals per match) for a one standard deviation increase in that predictor. {verdict}")
+    else:
+        st.info("Not enough injuries with complete data for the regression with these filters.")
+
+    st.markdown("#### Robustness check: do the conclusions depend on the normality assumption?")
+    rob = an.robustness_table(fdf)
+    if rob.empty:
+        st.info("Not enough injuries with these filters for the robustness checks.")
+    else:
+        st.dataframe(rob, hide_index=True, width="stretch")
+        st.caption("Each t-test or Pearson correlation is repeated with a rank-based test that makes no normality assumption. "
+                   "When both give the same answer at the 5% level, the conclusion does not rest on that assumption.")
+
     st.markdown("#### What this means for a technical director (full dataset)")
+    st.caption("Treat these as hypotheses to test: most effects in this data are small and not statistically significant.")
     full_heat = an.month_club_heatmap(df, SEASON_MONTHS)
     full_cs = an.club_summary(df)
     heavy = full_cs[full_cs["injuries"] >= 20].sort_values("avg_drop_index", ascending=False).iloc[0]
     long_types = an.injury_type_impact(df, 10).sort_values("avg_days_out", ascending=False).iloc[0]
+    full_star, full_pt = an.star_vs_squad_test(df), an.paired_rating_test(df)
+    star_line = ("Star players are not hit harder in results, but" if full_star.get("p", 0) >= 0.05
+                 else "Star players are hit differently in results, and")
+    dip_line = ("Ratings after return match ratings before on average, so there is no evidence of a lasting dip."
+                if full_pt.get("p", 0) >= 0.05 else "Ratings after return differ from ratings before, so monitor players closely after they come back.")
     st.markdown(
-        f"- **Plan rotation before the winter peak.** {full_heat.sum().idxmax()} has the most injuries, so manage minutes and recovery days in the weeks before it.\n"
-        f"- **Invest in squad depth, not only star signings.** Star players are not hit harder in results, but clubs such as {heavy['team']} lose "
+        f"- **Plan rotation before the peak month.** {full_heat.sum().idxmax()} has the most injuries, so manage minutes and recovery days in the weeks before it.\n"
+        f"- **Consider squad depth, not only star signings.** {star_line} clubs such as {heavy['team']} lose "
         f"{fmt(heavy['avg_drop_index'], 2)} goals of goal difference per match on average when a player is missing.\n"
         f"- **Budget for long layoffs.** {long_types['injury_type']} injuries keep players out for {fmt(long_types['avg_days_out'], 0)} days on average, so cover is needed early.\n"
-        f"- **Do not rush judgement on returning players.** Ratings after return match ratings before on average, so there is no evidence of a lasting dip.")
+        f"- **Judge returning players with care.** {dip_line}")
 
     st.markdown("#### Limitations")
     st.markdown(
         "- Each injury has at most three matches before, during and after, so averages are noisy and many results are not statistically significant.\n"
         "- Only eight clubs are included, and results depend on opponent strength, which the data does not control for.\n"
         "- Player ratings are missing for some appearances, and ratings are not recorded while a player is absent.\n"
+        "- Observations are not fully independent: some players have several injuries and match windows can overlap, so p-values are approximate.\n"
+        "- Three return dates with obvious year typos were repaired using a simple rule, and 59 matches with conflicting result and goal difference were set to missing.\n"
         "- The data shows association, not proof that an injury caused a change in results.")
 
 with tab_about:
     st.subheader("About the data and how it was prepared")
-    st.write("The source file has one row per injury (656 injuries, 224 players, 8 clubs, 5 seasons) and 42 columns describing "
-             "the three matches before the injury, the three matches missed and the three matches after returning.")
+    st.write(f"The source file has one row per injury ({len(df):,} injuries, {df['player'].nunique()} players, {df['team'].nunique()} clubs, "
+             f"{df['season'].nunique()} seasons) with columns describing the three matches before the injury, the three matches missed "
+             "and the three matches after returning.")
     st.markdown("#### Cleaning steps and what they found")
     st.dataframe(quality, hide_index=True, width="stretch")
+
+    st.markdown("#### Missing values and how they were handled")
+    st.dataframe(missing_value_report(load_data(io.BytesIO(uploaded.getvalue()) if uploaded else None)), hide_index=True, width="stretch")
 
     st.markdown("#### Columns created")
     st.dataframe(pd.DataFrame([
@@ -720,6 +826,7 @@ with tab_about:
         ("performance_drop_index", "Mean team goal difference before the injury minus mean goal difference while absent (above 0 = team did worse)"),
         ("points_drop", "Mean points per match before minus while absent (win 3, draw 1, loss 0)"),
         ("injury_type", "About 100 raw labels grouped into 15 categories"),
+        ("severity", "Days absent grouped into football consensus bands: slight 0-1, minimal 2-3, mild 4-7, moderate 8-28, severe 29+"),
         ("position_group", "Goalkeeper, Defender, Midfielder or Forward"),
         ("star_player", "FIFA rating of 82 or higher"),
         ("injury_month / season", "Taken from the injury date and the season column"),
@@ -730,6 +837,9 @@ with tab_about:
         "- Hägglund et al. (2013), *Injuries affect team performance negatively in professional football: an 11-year follow-up of the UEFA Champions League injury study*, British Journal of Sports Medicine. "
         "Found that injury burden and player availability were linked to team results, which motivated the team drop index.\n"
         "- *Muscle injury rates in professional football increase with fixture congestion*, British Journal of Sports Medicine (2013). Motivated the month-by-club view.\n"
-        "- Streamlit and Plotly football dashboard examples listed in the assignment brief guided the layout.")
+        "- Fuller et al. (2006), *Consensus statement on injury definitions and data collection procedures in studies of football (soccer) injuries*, British Journal of Sports Medicine. "
+        "Defines injury severity by days absent, which is the basis of the severity bands used here.\n"
+        "- Further reading supplied with the assignment brief: Springer, International Journal of Computational Intelligence Systems (2023), doi 10.1007/s44196-023-00217-6, "
+        "and the Streamlit and Plotly football analysis examples listed in the brief.")
     with st.expander("Preview the cleaned data"):
         st.dataframe(df.drop(columns=[c for c in df.columns if c.startswith("Match")]).head(50), hide_index=True)
