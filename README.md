@@ -1,5 +1,3 @@
-# IDA202-2505468-TANISHA-BAIJU-SHUKLA
-
 # Player Injuries and Team Performance Dashboard
 
 **Course:** Mathematics for AI-II (Summative Assessment, Scenario 1) | **CRS:** Artificial Intelligence
@@ -9,13 +7,23 @@ An interactive Streamlit dashboard for **FootLens Analytics** that shows how pla
 
 ## Live web app
 
-**Streamlit Cloud link:** `PASTE YOUR LIVE LINK HERE` (for example `https://your-app-name.streamlit.app`)
+**Streamlit Cloud link:** [https://footlens.streamlit.app/](https://footlens.streamlit.app/)
 
 ## Screenshots
 
-| Overview | Injury patterns |
+> **Screenshots required.** Take each screenshot from the live app above, save it in the `screenshots/` folder of this repository with exactly the file name shown, and commit it. The images below will then appear automatically.
+
+| Screenshot | Save as | What to capture |
+|---|---|---|
+| Overview | `screenshots/01_overview.png` | The header, the five KPI cards and the top charts on the Overview tab |
+| Pitch and patterns | `screenshots/02_pitch_and_patterns.png` | The football pitch injury map and the club-by-month heatmap |
+| Player recovery | `screenshots/03_player_recovery.png` | The form guide, the player timeline and the comeback leaderboard |
+| 3D explorer | `screenshots/04_3d_explorer.png` | Any of the rotatable 3D charts |
+| Insights | `screenshots/05_insights.png` | The written answers to the research questions and the statistical tables |
+
+| Overview | Pitch and patterns |
 |---|---|
-| ![Overview](screenshots/01_overview.png) | ![Injury patterns](screenshots/02_injury_patterns.png) |
+| ![Overview](screenshots/01_overview.png) | ![Pitch and patterns](screenshots/02_pitch_and_patterns.png) |
 | **Player recovery** | **3D explorer** |
 | ![Player recovery](screenshots/03_player_recovery.png) | ![3D explorer](screenshots/04_3d_explorer.png) |
 | **Insights** | |
@@ -51,6 +59,7 @@ The dashboard answers six research questions:
 - **KPI cards** for injuries, median days out, average team drop index, win rate while absent and average rating change.
 - **Insights tab** that writes plain-English answers to all six research questions from the filtered data, with t-tests, a correlation and confidence intervals, plus recommendations and limitations.
 - **About tab** that shows the cleaning log, column definitions and sources, and lets users download the filtered data as CSV.
+- **Pantone-inspired design:** Dress Blues, Apricot Illusion and Chocolate Fondant on an Alabaster background, with a compact filter bar above the KPI cards so nothing needs scrolling to find.
 - **Football pitch injury map:** an interactive pitch showing injuries by position (bubble size = injuries, colour = team drop when the player is out), plus a matching 3D pitch where taller stems mean more injuries.
 - **Statistics beyond the basics:** correlation matrix, standardised regression of the team drop, injury-severity analysis, and a robustness table that repeats each t-test with a rank-based test.
 - **Conditional insights:** every written conclusion is recalculated from the current filters and worded according to its p-value, so it never claims more than the data shows.
