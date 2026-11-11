@@ -11,16 +11,6 @@ An interactive Streamlit dashboard for **FootLens Analytics** that shows how pla
 
 ## Screenshots
 
-> **Screenshots required.** Take each screenshot from the live app above, save it in the `screenshots/` folder of this repository with exactly the file name shown, and commit it. The images below will then appear automatically.
-
-| Screenshot | Save as | What to capture |
-|---|---|---|
-| Overview | `screenshots/01_overview.png` | The header, the five KPI cards and the top charts on the Overview tab |
-| Pitch and patterns | `screenshots/02_pitch_and_patterns.png` | The football pitch injury map and the club-by-month heatmap |
-| Player recovery | `screenshots/03_player_recovery.png` | The form guide, the player timeline and the comeback leaderboard |
-| 3D explorer | `screenshots/04_3d_explorer.png` | Any of the rotatable 3D charts |
-| Insights | `screenshots/05_insights.png` | The written answers to the research questions and the statistical tables |
-
 | Overview | Pitch and patterns |
 |---|---|
 | ![Overview](screenshots/01_overview.png) | ![Pitch and patterns](screenshots/02_pitch_and_patterns.png) |
@@ -147,7 +137,7 @@ The app opens at `http://localhost:8501`.
 2. Go to [share.streamlit.io](https://share.streamlit.io) and sign in with GitHub.
 3. Click **Create app** (or **Deploy an app**), choose the repository, branch `main` and main file path `app.py`.
 4. Click **Deploy**. The first build installs the packages in `requirements.txt` and takes a couple of minutes.
-5. Copy the app URL and paste it into the **Live web app** section at the top of this README.
+5. Streamlit gives the app a public URL. For this project it is the link in the **Live web app** section above.
 
 ### Explore the analysis
 Open `notebooks/01_injury_impact_eda.ipynb` for the research questions, cleaning steps, `groupby`/`pivot_table` analysis and hypothesis tests with their outputs.
