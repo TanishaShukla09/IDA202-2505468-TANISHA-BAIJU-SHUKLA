@@ -140,4 +140,4 @@ The app opens at `http://localhost:8501`.
 5. Streamlit gives the app a public URL. For this project it is the link in the **Live web app** section above.
 
 ### Explore the analysis
-Open `notebooks/01_injury_impact_eda.ipynb` for the research questions, cleaning steps, `groupby`/`pivot_table` analysis and hypothesis tests with their outputs.
+Open [`Player_Injuries_Team_Performance_EDA.ipynb`](Player_Injuries_Team_Performance_EDA.ipynb) for the research questions, cleaning steps, `groupby`/`pivot_table` analysis and hypothesis tests with their outputs.
